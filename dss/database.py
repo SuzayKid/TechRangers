@@ -1,6 +1,7 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import numpy as np
 
 def get_db_connection():
     """Establishes a database connection and returns it."""
@@ -47,12 +48,59 @@ def fetch_eligibility_rules():
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT s.scheme_name, er.attribute, er.operator, er.value FROM eligibility_rules er JOIN schemes s ON er.scheme_id = s.scheme_id")
+        cur.execute("SELECT s.scheme_id, s.scheme_name, s.description, s.description_embedding, er.attribute, er.operator, er.value FROM eligibility_rules er JOIN schemes s ON er.scheme_id = s.scheme_id")
         rules = cur.fetchall()
         cur.close()
         return rules
     except Exception as e:
         print(f"Error fetching eligibility rules: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+def upsert_scheme_embedding(scheme_id: int, embedding: np.ndarray):
+    """Inserts or updates a scheme's description embedding."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO schemes (scheme_id, description_embedding) VALUES (%s, %s) ON CONFLICT (scheme_id) DO UPDATE SET description_embedding = EXCLUDED.description_embedding",
+            (scheme_id, embedding.tolist())
+        )
+        conn.commit()
+        cur.close()
+        return True
+    except Exception as e:
+        print(f"Error upserting scheme embedding: {e}")
+        if conn:
+            conn.rollback()
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def find_similar_schemes(query_embedding: np.ndarray, limit: int = 5):
+    """
+    Finds schemes similar to the query embedding using cosine similarity.
+    Requires the pgvector extension to be enabled and description_embedding column to exist.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        # Use the <-> operator for L2 distance, which is equivalent to cosine similarity for normalized vectors
+        # Or use <=> for cosine distance directly (1 - cosine similarity)
+        cur.execute(
+            "SELECT scheme_id, scheme_name, description, description_embedding FROM schemes ORDER BY description_embedding <=> %s LIMIT %s",
+            (query_embedding.tolist(), limit)
+        )
+        schemes = cur.fetchall()
+        cur.close()
+        return schemes
+    except Exception as e:
+        print(f"Error finding similar schemes: {e}")
         return []
     finally:
         if conn:

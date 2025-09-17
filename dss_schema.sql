@@ -34,10 +34,13 @@ CREATE TABLE IF NOT EXISTS village_attributes (
 );
 
 -- Table for Schemes
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS schemes (
     scheme_id SERIAL PRIMARY KEY,
     scheme_name VARCHAR(255) NOT NULL,
-    description TEXT
+    description TEXT,
+    description_embedding VECTOR(1536) -- Assuming OpenAI's text-embedding-ada-002 dimension
 );
 
 -- Table for Eligibility Rules

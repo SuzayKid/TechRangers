@@ -1,9 +1,14 @@
 from flask import Flask, request, jsonify
 from dss.dss_engine import DSSEngine
+from dss.mcp_protocol import MCPProtocol
 import os
 
 app = Flask(__name__)
-dss_engine = DSSEngine()
+dss_engine = DSSEngine() # Keep for potential fallback or other uses
+# Initialize MCPProtocol with LLM and Embedding API URLs from environment variables
+LLM_API_URL = os.getenv("LLM_API_URL", "http://localhost:8000/v1/chat/completions")
+EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "http://localhost:8001/v1/embeddings")
+mcp_protocol = MCPProtocol(LLM_API_URL, EMBEDDING_API_URL)
 
 @app.route('/api/dss/recommendations', methods=['POST'])
 def get_recommendations():
@@ -16,25 +21,32 @@ def get_recommendations():
     if not data:
         return jsonify({"error": "Invalid JSON input"}), 400
 
+    user_query = data.get("query", "")
     input_type = data.get("type")
     input_id = data.get("id")
 
-    if not input_type or not input_id:
-        return jsonify({"error": "Missing 'type' or 'id' in request body"}), 400
+    village_id = None
+    patta_holder_id = None
+
+    if input_type == "village":
+        village_id = input_id
+    elif input_type == "patta_holder":
+        patta_holder_id = input_id
     
-    if input_type not in ["village", "patta_holder"]:
-        return jsonify({"error": "Invalid 'type'. Must be 'village' or 'patta_holder'"}), 400
+    # If no specific location is provided, proceed with just the query
+    if not user_query and not (village_id or patta_holder_id):
+        return jsonify({"error": "Either 'query' or a valid 'type' and 'id' must be provided."}), 400
 
     try:
-        recommendations_result = dss_engine.get_recommendations(input_type, input_id)
+        llm_recommendations = mcp_protocol.get_scheme_recommendations_for_user(
+            user_query=user_query,
+            village_id=village_id,
+            patta_holder_id=patta_holder_id
+        )
         
-        if "error" in recommendations_result:
-            return jsonify(recommendations_result), 404 # Or appropriate error code
-        
-        return jsonify(recommendations_result), 200
-    except NotImplementedError as e:
-        return jsonify({"error": str(e)}), 501
+        return jsonify({"recommendations": llm_recommendations}), 200
     except Exception as e:
+        print(f"Error in get_recommendations API: {e}")
         return jsonify({"error": f"An internal server error occurred: {str(e)}"}), 500
 
 if __name__ == '__main__':
